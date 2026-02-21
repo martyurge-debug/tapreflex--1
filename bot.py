@@ -1,8 +1,7 @@
 import random
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, JobQueue
 
-# Inserisci il tuo token qui
 TOKEN = "8554013325:AAHV8N6sXezW2YKhNtD4Z5jQDQn5outH-zw"
 
 scores = {}
@@ -21,14 +20,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Benvenuto in Tap Reflex ⚡\n\nPremi /play per iniziare!")
 
 async def play(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user.id
-    scores[user] = 0
-    await next_round(context, user, 1)
+    chat_id = update.effective_chat.id
+    scores[chat_id] = 0
+    context.chat_data['round'] = 1
+    await next_round(context, chat_id)
 
-async def next_round(context, user, round_num):
+async def next_round(context: ContextTypes.DEFAULT_TYPE, chat_id):
+    round_num = context.chat_data['round']
+    if round_num > 5:
+        final = scores[chat_id]
+        best = records.get(chat_id, 0)
+        if final > best:
+            records[chat_id] = final
+            best = final
+        await context.bot.send_message(chat_id=chat_id, text=f"🏁 Partita finita!\n\nPunteggio: {final}\nRecord: {best}")
+        return
+
     target = random.choice(["RED", "BLUE", "GREEN"])
-    context.user_data["target"] = target
-    context.user_data["round"] = round_num
+    context.chat_data['target'] = target
 
     text_map = {
         "RED": "🔴 TAPPA IL ROSSO!",
@@ -37,51 +46,40 @@ async def next_round(context, user, round_num):
     }
 
     await context.bot.send_message(
-        chat_id=user,
+        chat_id=chat_id,
         text=f"Round {round_num}/5\n\n{text_map[target]}",
         reply_markup=keyboard()
     )
 
-    import asyncio
-    await asyncio.sleep(4)
+    # programma il round successivo dopo 4 secondi
+    context.job_queue.run_once(next_round_job, 4, chat_id=chat_id)
 
-    if context.user_data.get("round") == round_num:
-        await context.bot.send_message(chat_id=user, text="⏱ Tempo scaduto!")
-        await process_round(context, user, None)
+async def next_round_job(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.chat_id
+    context.chat_data['round'] += 1
+    await next_round(context, chat_id)
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user = query.from_user.id
+    chat_id = query.message.chat.id
     choice = query.data
-
     await query.answer()
-    await process_round(context, user, choice)
 
-async def process_round(context, user, choice):
-    round_num = context.user_data.get("round")
+    target = context.chat_data.get('target')
+    if target is None:
+        return  # se non c'è round attivo, ignora
 
-    if choice == context.user_data.get("target"):
-        scores[user] += 10
-        await context.bot.send_message(chat_id=user, text="✅ Corretto! +10")
-    elif choice is not None:
-        scores[user] -= 5
-        await context.bot.send_message(chat_id=user, text="❌ Sbagliato! -5")
-
-    if round_num < 5:
-        await next_round(context, user, round_num + 1)
+    if choice == target:
+        scores[chat_id] += 10
+        await context.bot.send_message(chat_id=chat_id, text="✅ Corretto! +10")
     else:
-        final = scores[user]
-        best = records.get(user, 0)
-        if final > best:
-            records[user] = final
-            best = final
-        await context.bot.send_message(chat_id=user, text=f"🏁 Partita finita!\n\nPunteggio: {final}\nRecord: {best}")
+        scores[chat_id] -= 5
+        await context.bot.send_message(chat_id=chat_id, text="❌ Sbagliato! -5")
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not records:
         await update.message.reply_text("Nessun punteggio ancora!")
         return
-
     ranking = sorted(records.items(), key=lambda x: x[1], reverse=True)[:10]
     text = "🏆 Classifica Globale:\n\n"
     for i, (_, score) in enumerate(ranking, 1):
@@ -92,11 +90,10 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Sezione Render: mantiene il bot sempre attivo
 # -----------------------------------------
 if __name__ == "__main__":
-    import asyncio
     import nest_asyncio
-    from telegram.ext import ApplicationBuilder
-
+    import asyncio
     nest_asyncio.apply()
+
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("play", play))
