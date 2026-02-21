@@ -2,6 +2,7 @@ import random
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
+# Inserisci il tuo token qui
 TOKEN = "8554013325:AAHV8N6sXezW2YKhNtD4Z5jQDQn5outH-zw"
 
 scores = {}
@@ -87,10 +88,20 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. {score} punti\n"
     await update.message.reply_text(text)
 
+# -----------------------------------------
+# Sezione Render: mantiene il bot sempre attivo
+# -----------------------------------------
 if __name__ == "__main__":
+    import asyncio
+    import nest_asyncio
+    from telegram.ext import ApplicationBuilder
+
+    nest_asyncio.apply()
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("play", play))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CallbackQueryHandler(button))
-    app.run_polling()
+
+    print("Bot avviato e in ascolto su Render...")
+    asyncio.get_event_loop().run_forever()
